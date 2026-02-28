@@ -56,6 +56,17 @@ export const SwipeCard = ({ media, onSwipe, onInfo, isTop, index }: SwipeCardPro
       exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.2 } }}
       transition={{ type: 'spring', stiffness: 300, damping: 20 }}
     >
+      {/* Info button lives OUTSIDE overflow-hidden so it's never clipped */}
+      {isTop && (
+        <button
+          onClick={() => onInfo(media)}
+          className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white/80 hover:text-white hover:bg-black/90 transition-colors z-20 border border-white/10"
+          aria-label="More info"
+        >
+          <Info size={18} />
+        </button>
+      )}
+
       <motion.div
         className="w-full h-full rounded-4xl shadow-2xl overflow-hidden bg-zinc-900 border border-white/10 relative"
         style={{ x, rotate }}
@@ -76,17 +87,6 @@ export const SwipeCard = ({ media, onSwipe, onInfo, isTop, index }: SwipeCardPro
           }}
         />
         <div className="absolute inset-0 bg-linear-to-t from-black via-black/60 to-transparent pointer-events-none" />
-
-        {/* Info button — top right, only on top card */}
-        {isTop && (
-          <button
-            onClick={() => onInfo(media)}
-            className="absolute top-5 right-5 w-9 h-9 rounded-full bg-black/50 backdrop-blur-md flex items-center justify-center text-white/70 hover:text-white hover:bg-black/80 transition-colors z-20"
-            aria-label="More info"
-          >
-            <Info size={18} />
-          </button>
-        )}
 
         <div className="absolute bottom-0 left-0 w-full p-8 text-white pointer-events-none flex flex-col justify-end h-full">
           <div className="mt-auto">

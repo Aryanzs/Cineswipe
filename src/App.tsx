@@ -294,10 +294,10 @@ export default function App() {
         </div>
       </header>
 
-      <main className="flex-1 relative overflow-hidden flex flex-col items-center justify-center px-4 pb-6">
+      <main className="flex-1 relative overflow-x-hidden flex flex-col items-center justify-center px-4 pb-4">
         {view === 'swipe' ? (
           <>
-            <div className="relative w-full max-w-sm sm:max-w-md lg:max-w-lg aspect-2/3 max-h-[62vh] sm:max-h-[68vh] lg:max-h-[75vh] flex items-center justify-center">
+            <div className="relative w-full max-w-sm sm:max-w-md lg:max-w-lg aspect-2/3 max-h-[56vh] sm:max-h-[62vh] lg:max-h-[70vh] flex items-center justify-center">
               {loading && movies.length === 0 ? (
                 <Loader2 className="animate-spin text-white/50" size={32} />
               ) : (

@@ -33,18 +33,36 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   useEffect(() => {
-    // onAuthStateChange fires INITIAL_SESSION on mount — covers session restore.
-    // Single source of truth avoids double setUser() race condition.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+    // getSession() reliably resolves the initial session even when the access
+    // token is expired and needs a refresh — avoids infinite loading on reopen.
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      try {
         if (session?.user) {
           const username = await loadProfile(session.user.id);
           if (username) setUser({ id: session.user.id, username });
-          else setUser(null);
-        } else {
+        }
+      } catch {
+        // Profile load failed — stay logged out
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    // onAuthStateChange handles SUBSEQUENT events only: login, logout, token refresh.
+    // It does NOT control the loading state — getSession handles that.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        try {
+          if (session?.user) {
+            const username = await loadProfile(session.user.id);
+            if (username) setUser({ id: session.user.id, username });
+            else setUser(null);
+          } else {
+            setUser(null);
+          }
+        } catch {
           setUser(null);
         }
-        setLoading(false);
       }
     );
 
