@@ -1,0 +1,5 @@
+{
+  "name": "CineSwipe",
+  "description": "A premium movie recommendation app with Tinder-like swipe interactions.",
+  "requestFramePermissions": []
+}
