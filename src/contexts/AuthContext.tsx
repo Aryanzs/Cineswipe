@@ -33,24 +33,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   useEffect(() => {
-    // Restore session on app load
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const username = await loadProfile(session.user.id);
-        if (username) setUser({ id: session.user.id, username });
-      }
-      setLoading(false);
-    });
-
-    // Keep state in sync on login/logout/token refresh
+    // onAuthStateChange fires INITIAL_SESSION on mount — covers session restore.
+    // Single source of truth avoids double setUser() race condition.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         if (session?.user) {
           const username = await loadProfile(session.user.id);
           if (username) setUser({ id: session.user.id, username });
+          else setUser(null);
         } else {
           setUser(null);
         }
+        setLoading(false);
       }
     );
 

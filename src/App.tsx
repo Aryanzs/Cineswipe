@@ -26,6 +26,7 @@ export default function App() {
   const [interactions, setInteractions] = useState<Interaction[]>([]);
   const [view, setView] = useState<'swipe' | 'list'>('swipe');
   const [loading, setLoading] = useState(true);
+  const [interactionsLoading, setInteractionsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedMedia, setSelectedMedia] = useState<Media | null>(null);
 
@@ -53,16 +54,17 @@ export default function App() {
     if (user) {
       fetchInteractions();
     }
-  }, [user]);
+  }, [user?.id]);
 
   useEffect(() => {
     if (user) {
       loadInitialMovies();
     }
-  }, [mediaType, activeProvider, user]);
+  }, [mediaType, activeProvider, user?.id]);
 
   const fetchInteractions = async () => {
     if (!user) return;
+    setInteractionsLoading(true);
     try {
       const { data, error } = await supabase
         .from('interactions')
@@ -77,6 +79,8 @@ export default function App() {
       setRejectedMovies(rows.filter(i => i.interaction_type === 'reject').map(i => i.media_data));
     } catch (err) {
       console.error(err);
+    } finally {
+      setInteractionsLoading(false);
     }
   };
 
@@ -228,7 +232,7 @@ export default function App() {
 
   return (
     <div className="h-screen w-full flex flex-col bg-black text-white font-sans overflow-hidden">
-      <header className="flex flex-col gap-4 p-6 z-50 bg-gradient-to-b from-black to-transparent">
+      <header className="flex flex-col gap-3 px-4 pt-4 pb-3 sm:px-6 sm:pt-6 z-50 bg-linear-to-b from-black to-transparent">
         <div className="flex justify-between items-center">
           <h1 className="text-2xl font-display tracking-wide italic">CineSwipe</h1>
           <div className="flex gap-2 items-center">
@@ -293,7 +297,7 @@ export default function App() {
       <main className="flex-1 relative overflow-hidden flex flex-col items-center justify-center px-4 pb-6">
         {view === 'swipe' ? (
           <>
-            <div className="relative w-full max-w-sm aspect-[2/3] max-h-[65vh] flex items-center justify-center">
+            <div className="relative w-full max-w-sm sm:max-w-md lg:max-w-lg aspect-2/3 max-h-[62vh] sm:max-h-[68vh] lg:max-h-[75vh] flex items-center justify-center">
               {loading && movies.length === 0 ? (
                 <Loader2 className="animate-spin text-white/50" size={32} />
               ) : (
@@ -346,18 +350,24 @@ export default function App() {
           </>
         ) : (
           <div className="w-full h-full flex flex-col pt-2">
-            <div className="flex items-center justify-between px-6 mb-4">
-              <h2 className="text-3xl font-display">Your Watchlist</h2>
-              {filteredLikedMovies.length > 0 && (
+            <div className="flex items-center justify-between px-4 sm:px-6 mb-4">
+              <h2 className="text-2xl sm:text-3xl font-display">Your Watchlist</h2>
+              {!interactionsLoading && filteredLikedMovies.length > 0 && (
                 <span className="text-zinc-500 text-sm">{filteredLikedMovies.length} titles</span>
               )}
             </div>
-            <MyList
-              mediaList={filteredLikedMovies}
-              interactions={filteredInteractions}
-              onRemove={removeInteraction}
-              onInfo={setSelectedMedia}
-            />
+            {interactionsLoading ? (
+              <div className="flex-1 flex items-center justify-center">
+                <Loader2 className="animate-spin text-white/40" size={32} />
+              </div>
+            ) : (
+              <MyList
+                mediaList={filteredLikedMovies}
+                interactions={filteredInteractions}
+                onRemove={removeInteraction}
+                onInfo={setSelectedMedia}
+              />
+            )}
           </div>
         )}
       </main>
