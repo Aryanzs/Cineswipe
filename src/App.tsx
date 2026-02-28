@@ -7,6 +7,7 @@ import { MediaModal } from './components/MediaModal';
 import { Film, Heart, X, Loader2, Tv, LogOut } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useAuth } from './contexts/AuthContext';
+import { supabase } from './lib/supabase';
 import toast from 'react-hot-toast';
 
 const PROVIDERS = [
@@ -18,7 +19,7 @@ const PROVIDERS = [
 ];
 
 export default function App() {
-  const { user, token, logout } = useAuth();
+  const { user, logout } = useAuth();
   const [movies, setMovies] = useState<Media[]>([]);
   const [likedMovies, setLikedMovies] = useState<Media[]>([]);
   const [rejectedMovies, setRejectedMovies] = useState<Media[]>([]);
@@ -49,67 +50,73 @@ export default function App() {
   }, [activeProvider]);
 
   useEffect(() => {
-    if (token) {
+    if (user) {
       fetchInteractions();
     }
-  }, [token]);
+  }, [user]);
 
   useEffect(() => {
-    if (token) {
+    if (user) {
       loadInitialMovies();
     }
-  }, [mediaType, activeProvider, token]);
+  }, [mediaType, activeProvider, user]);
 
   const fetchInteractions = async () => {
+    if (!user) return;
     try {
-      const res = await fetch('/api/interactions', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Failed to fetch interactions');
-      const data: Interaction[] = await res.json();
+      const { data, error } = await supabase
+        .from('interactions')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-      setInteractions(data);
-      setLikedMovies(data.filter(i => i.interaction_type === 'like').map(i => i.media_data));
-      setRejectedMovies(data.filter(i => i.interaction_type === 'reject').map(i => i.media_data));
+      if (error) throw error;
+
+      const rows = (data ?? []) as Interaction[];
+      setInteractions(rows);
+      setLikedMovies(rows.filter(i => i.interaction_type === 'like').map(i => i.media_data));
+      setRejectedMovies(rows.filter(i => i.interaction_type === 'reject').map(i => i.media_data));
     } catch (err) {
       console.error(err);
     }
   };
 
   const saveInteraction = async (media: Media, type: 'like' | 'reject') => {
+    if (!user) return;
     try {
-      const res = await fetch('/api/interactions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
+      const { error } = await supabase.from('interactions').upsert(
+        {
+          user_id: user.id,
           media_id: media.id,
           media_type: media.media_type,
           interaction_type: type,
-          media_data: media
-        })
-      });
-      if (!res.ok) throw new Error('Failed to save');
+          media_data: media,
+        },
+        { onConflict: 'user_id,media_id,media_type' }
+      );
+      if (error) throw error;
     } catch {
       toast.error('Could not save your choice. Check your connection.');
     }
   };
 
-  const removeInteraction = async (interactionId: number) => {
+  const removeInteraction = async (interactionId: string) => {
+    if (!user) return;
     try {
-      const res = await fetch(`/api/interactions/${interactionId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error('Failed to remove');
+      const { error } = await supabase
+        .from('interactions')
+        .delete()
+        .eq('id', interactionId)
+        .eq('user_id', user.id);
 
-      setInteractions(prev => prev.filter(i => i.id !== interactionId));
-      setLikedMovies(prev => prev.filter(m => {
-        const interaction = interactions.find(i => i.id === interactionId);
-        return interaction ? m.id !== interaction.media_data.id : true;
-      }));
+      if (error) throw error;
+
+      setInteractions(prev => {
+        const removed = prev.find(i => i.id === interactionId);
+        if (removed) {
+          setLikedMovies(lm => lm.filter(m => m.id !== removed.media_data.id));
+        }
+        return prev.filter(i => i.id !== interactionId);
+      });
       toast.success('Removed from watchlist');
     } catch {
       toast.error('Could not remove item. Try again.');

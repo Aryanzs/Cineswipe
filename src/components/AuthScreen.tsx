@@ -12,7 +12,7 @@ export const AuthScreen = () => {
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<{ username?: string; password?: string }>({});
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { signIn, signUp } = useAuth();
 
   const validateFields = (): boolean => {
     const errors: { username?: string; password?: string } = {};
@@ -21,7 +21,6 @@ export const AuthScreen = () => {
       if (username.length < 3) errors.username = 'Must be at least 3 characters';
       else if (username.length > 30) errors.username = 'Must be at most 30 characters';
       else if (!USERNAME_REGEX.test(username)) errors.username = 'Letters, numbers, and underscores only';
-
       if (password.length < 8) errors.password = 'Must be at least 8 characters';
     } else {
       if (!username.trim()) errors.username = 'Username is required';
@@ -39,20 +38,11 @@ export const AuthScreen = () => {
 
     setLoading(true);
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password })
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed');
+      if (isLogin) {
+        await signIn(username.trim(), password);
+      } else {
+        await signUp(username.trim(), password);
       }
-
-      login(data.token, data.user);
     } catch (err: any) {
       setError(err.message);
     } finally {

@@ -1,60 +1,105 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { supabase } from '../lib/supabase';
 
 interface User {
-  id: number;
+  id: string;
   username: string;
 }
 
 interface AuthContextType {
   user: User | null;
-  token: string | null;
-  login: (token: string, user: User) => void;
-  logout: () => void;
   loading: boolean;
+  signIn: (username: string, password: string) => Promise<void>;
+  signUp: (username: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Converts a username to a fake email Supabase can store
+const toEmail = (username: string) => `${username.toLowerCase()}@cineswipe.app`;
+
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (token) {
-      fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      .then(res => {
-        if (!res.ok) throw new Error('Invalid token');
-        return res.json();
-      })
-      .then(data => {
-        setUser(data.user);
-      })
-      .catch(() => {
-        logout();
-      })
-      .finally(() => setLoading(false));
-    } else {
-      setLoading(false);
-    }
-  }, [token]);
-
-  const login = (newToken: string, newUser: User) => {
-    localStorage.setItem('token', newToken);
-    setToken(newToken);
-    setUser(newUser);
+  const loadProfile = async (userId: string): Promise<string | null> => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('user_id', userId)
+      .single();
+    return data?.username ?? null;
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
+  useEffect(() => {
+    // Restore session on app load
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user) {
+        const username = await loadProfile(session.user.id);
+        if (username) setUser({ id: session.user.id, username });
+      }
+      setLoading(false);
+    });
+
+    // Keep state in sync on login/logout/token refresh
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
+        if (session?.user) {
+          const username = await loadProfile(session.user.id);
+          if (username) setUser({ id: session.user.id, username });
+        } else {
+          setUser(null);
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const signUp = async (username: string, password: string) => {
+    // Check if username is already taken before creating auth user
+    const { data: existing } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('username', username)
+      .maybeSingle();
+
+    if (existing) throw new Error('Username already taken');
+
+    const { data, error } = await supabase.auth.signUp({
+      email: toEmail(username),
+      password,
+    });
+
+    if (error) throw new Error(error.message);
+    if (!data.user) throw new Error('Registration failed');
+
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .insert({ user_id: data.user.id, username });
+
+    if (profileError) throw new Error('Failed to save username');
+
+    setUser({ id: data.user.id, username });
+  };
+
+  const signIn = async (username: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: toEmail(username),
+      password,
+    });
+    if (error) throw new Error('Invalid username or password');
+    // User state is set via onAuthStateChange listener
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -8,7 +8,7 @@ coverage/
 # Environment files — keep only the example template
 .env*
 !.env.example
-.env.example
+
 # SQLite database and WAL mode sidecar files (contain user data)
 *.db
 *.db-shm

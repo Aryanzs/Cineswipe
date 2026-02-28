@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 interface MyListProps {
   mediaList: Media[];
   interactions: Interaction[];
-  onRemove: (interactionId: number) => void;
+  onRemove: (interactionId: string) => void;
   onInfo: (media: Media) => void;
 }
 
