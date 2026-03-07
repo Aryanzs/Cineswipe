@@ -21,23 +21,25 @@ const fetchFromTMDB = async (endpoint: string, params: Record<string, string> = 
 export const getDiscoverMedia = async (
   type: 'movie' | 'tv',
   page = 1,
-  providerId?: number | null
+  providerId?: number | null,
+  extraParams: Record<string, string> = {}
 ): Promise<Media[]> => {
   const params: Record<string, string> = {
     page: page.toString(),
     sort_by: 'popularity.desc',
-    watch_region: 'IN', // Defaulting to IN to support JioHotstar/Hotstar
+    watch_region: 'IN',
+    ...extraParams,  // allows overriding sort_by, adding vote_count.gte, etc.
   };
-  
+
   if (providerId) {
     params.with_watch_providers = providerId.toString();
   }
-  
+
   const data = await fetchFromTMDB(`/discover/${type}`, params);
-  return data.results.map((item: any) => ({ 
-    ...item, 
+  return data.results.map((item: any) => ({
+    ...item,
     media_type: type,
-    provider_id: providerId 
+    provider_id: providerId ?? null,
   }));
 };
 

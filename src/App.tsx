@@ -1,69 +1,82 @@
 import { useState, useEffect, useRef } from 'react';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { Media, Interaction } from './types';
 import { getDiscoverMedia, getRecommendations } from './services/tmdb';
 import { SwipeCard } from './components/SwipeCard';
 import { MyList } from './components/MyList';
 import { MediaModal } from './components/MediaModal';
-import { Film, Heart, X, Loader2, Tv, LogOut } from 'lucide-react';
+import { Film, Heart, X, Loader2, Tv, LogOut, Sparkles, Compass } from 'lucide-react';
 import { AnimatePresence } from 'motion/react';
 import { useAuth } from './contexts/AuthContext';
 import { supabase } from './lib/supabase';
 import toast from 'react-hot-toast';
 
-const PROVIDERS = [
-  { id: null, name: 'All' },
-  { id: 8, name: 'Netflix' },
-  { id: 119, name: 'Prime Video' },
-  { id: 122, name: 'Hotstar' },
-  { id: 220, name: 'JioCinema' },
+const PROVIDERS: { id: number | null; name: string; slug: string | null }[] = [
+  { id: null, name: 'All',         slug: null      },
+  { id: 8,    name: 'Netflix',     slug: 'netflix' },
+  { id: 119,  name: 'Prime Video', slug: 'prime'   },
+  { id: 122,  name: 'Hotstar',     slug: 'hotstar' },
+  { id: 220,  name: 'JioCinema',   slug: 'jio'     },
 ];
 
+// Build a URL path from view + provider + mediaType
+const buildPath = (
+  v: 'swipe' | 'list',
+  pId: number | null,
+  t: 'movie' | 'tv'
+): string => {
+  const slug = PROVIDERS.find(p => p.id === pId)?.slug ?? null;
+  const tv = t === 'tv' ? '/tv' : '';
+  if (v === 'list') return slug ? `/mylist/${slug}${tv}` : `/mylist${tv}`;
+  return slug ? `/${slug}${tv}` : (t === 'tv' ? '/tv' : '/');
+};
+
+// Explore mode discover params: acclaimed films outside popularity charts
+const EXPLORE_PARAMS = { sort_by: 'vote_average.desc', 'vote_count.gte': '300' };
+
 export default function App() {
+  const { provider: providerSlug } = useParams<{ provider?: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
+
+  // All navigation state is derived from the URL — no useState for view/provider/mediaType
+  const view: 'swipe' | 'list' = location.pathname.startsWith('/mylist') ? 'list' : 'swipe';
+  const mediaType: 'movie' | 'tv' = location.pathname.endsWith('/tv') ? 'tv' : 'movie';
+  const activeProvider: number | null = PROVIDERS.find(p => p.slug === providerSlug)?.id ?? null;
+
+  // Explore mode: "For You" (recommendations) vs "Explore" (different discovery)
+  const [exploreMode, setExploreMode] = useState(() =>
+    localStorage.getItem('cs_explore_mode') === 'true'
+  );
+
   const [movies, setMovies] = useState<Media[]>([]);
   const [likedMovies, setLikedMovies] = useState<Media[]>([]);
   const [rejectedMovies, setRejectedMovies] = useState<Media[]>([]);
   const [interactions, setInteractions] = useState<Interaction[]>([]);
-  const [view, setView] = useState<'swipe' | 'list'>('swipe');
   const [loading, setLoading] = useState(true);
   const [interactionsLoading, setInteractionsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedMedia, setSelectedMedia] = useState<Media | null>(null);
 
-  // Filters — persisted to localStorage
-  const [mediaType, setMediaType] = useState<'movie' | 'tv'>(() =>
-    (localStorage.getItem('cs_filter_type') as 'movie' | 'tv') || 'movie'
-  );
-  const [activeProvider, setActiveProvider] = useState<number | null>(() => {
-    const stored = localStorage.getItem('cs_filter_provider');
-    return stored !== null ? (stored === 'null' ? null : parseInt(stored)) : null;
-  });
-
   const pageRef = useRef(1);
 
-  // Persist filter changes
+  // --- Effect 1: Fetch interactions whenever the user changes ---
   useEffect(() => {
-    localStorage.setItem('cs_filter_type', mediaType);
-  }, [mediaType]);
-
-  useEffect(() => {
-    localStorage.setItem('cs_filter_provider', String(activeProvider));
-  }, [activeProvider]);
-
-  useEffect(() => {
-    if (user) {
-      fetchInteractions();
-    }
+    if (user) fetchInteractions();
   }, [user?.id]);
 
+  // --- Effect 2: Load movies after interactions are ready, or when filters change ---
+  // interactionsLoading starts true, so this skips until fetchInteractions() completes.
+  // On filter/mode changes it fires immediately (interactionsLoading is already false).
   useEffect(() => {
-    if (user) {
-      loadInitialMovies();
-    }
-  }, [mediaType, activeProvider, user?.id]);
+    if (!user || interactionsLoading) return;
+    loadInitialMovies();
+  }, [user?.id, mediaType, activeProvider, exploreMode, interactionsLoading]);
 
-  const fetchInteractions = async () => {
-    if (!user) return;
+  // Returns the fetched data AND updates state
+  const fetchInteractions = async (): Promise<{ liked: Media[]; rejected: Media[] }> => {
+    if (!user) return { liked: [], rejected: [] };
     setInteractionsLoading(true);
     try {
       const { data, error } = await supabase
@@ -75,12 +88,105 @@ export default function App() {
 
       const rows = (data ?? []) as Interaction[];
       setInteractions(rows);
-      setLikedMovies(rows.filter(i => i.interaction_type === 'like').map(i => i.media_data));
-      setRejectedMovies(rows.filter(i => i.interaction_type === 'reject').map(i => i.media_data));
+      const liked = rows.filter(i => i.interaction_type === 'like').map(i => i.media_data);
+      const rejected = rows.filter(i => i.interaction_type === 'reject').map(i => i.media_data);
+      setLikedMovies(liked);
+      setRejectedMovies(rejected);
+      return { liked, rejected };
     } catch (err) {
       console.error(err);
+      return { liked: [], rejected: [] };
     } finally {
       setInteractionsLoading(false);
+    }
+  };
+
+  // opts is only passed on the initial load (from effect 1) where state hasn't updated yet.
+  // On filter/mode changes (effect 2), called with no args — reads from state which is populated.
+  const loadInitialMovies = async (opts?: { seenIds: Set<number>; liked: Media[] }) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const seenIds = opts?.seenIds ?? new Set([
+        ...likedMovies.map(m => m.id),
+        ...rejectedMovies.map(m => m.id),
+      ]);
+      const liked = opts?.liked ?? likedMovies;
+
+      let queue: Media[] = [];
+
+      // --- For You mode: seed queue from recommendations of recently liked titles ---
+      const recentLikedForType = liked
+        .filter(m => m.media_type === mediaType)
+        .slice(0, 3);
+
+      if (!exploreMode && recentLikedForType.length > 0) {
+        const recResults = await Promise.allSettled(
+          recentLikedForType.map(m => getRecommendations(m.id, m.media_type))
+        );
+
+        const allRecs = recResults
+          .flatMap(r => r.status === 'fulfilled' ? r.value : [])
+          .filter(m => m.media_type === mediaType && !seenIds.has(m.id));
+
+        // Deduplicate by id
+        const uniqueRecs = [...new Map(allRecs.map(m => [m.id, m])).values()];
+
+        if (uniqueRecs.length >= 5) {
+          // Enough recommendations — use them directly
+          pageRef.current = 1;
+          queue = uniqueRecs;
+        } else {
+          // Supplement with discovery
+          pageRef.current = 1;
+          const recIds = new Set(uniqueRecs.map(m => m.id));
+          const discover = await getDiscoverMedia(mediaType, pageRef.current, activeProvider);
+          const extra = discover.filter(m => !seenIds.has(m.id) && !recIds.has(m.id));
+          queue = [...uniqueRecs, ...extra];
+        }
+      }
+
+      // --- Explore mode OR no liked titles yet: varied discovery ---
+      if (queue.length === 0) {
+        if (exploreMode) {
+          // Acclaimed films, random starting page for variety
+          const page = Math.floor(Math.random() * 10) + 1;
+          pageRef.current = page;
+          const movies = await getDiscoverMedia(mediaType, page, activeProvider, EXPLORE_PARAMS);
+          queue = movies.filter(m => !seenIds.has(m.id));
+        } else {
+          // No likes yet: random page so the queue is different each session
+          const page = Math.floor(Math.random() * 3) + 1;
+          pageRef.current = page;
+          const movies = await getDiscoverMedia(mediaType, page, activeProvider);
+          queue = movies.filter(m => !seenIds.has(m.id));
+        }
+      }
+
+      setMovies(queue);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchMoreMovies = async () => {
+    try {
+      pageRef.current += 1;
+      const params = exploreMode ? EXPLORE_PARAMS : {};
+      const trending = await getDiscoverMedia(mediaType, pageRef.current, activeProvider, params);
+
+      const seenIds = new Set([
+        ...likedMovies.map(m => m.id),
+        ...rejectedMovies.map(m => m.id),
+        ...movies.map(m => m.id),
+      ]);
+      const newMovies = trending.filter(m => !seenIds.has(m.id));
+      setMovies(prev => [...prev, ...newMovies]);
+    } catch {
+      // Silent — queue still has cards
     }
   };
 
@@ -127,55 +233,22 @@ export default function App() {
     }
   };
 
-  const loadInitialMovies = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      pageRef.current = 1;
-      const trending = await getDiscoverMedia(mediaType, pageRef.current, activeProvider);
-
-      const seenIds = new Set([
-        ...likedMovies.map((m: Media) => m.id),
-        ...rejectedMovies.map((m: Media) => m.id)
-      ]);
-
-      setMovies(trending.filter(m => !seenIds.has(m.id)));
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchMoreMovies = async () => {
-    try {
-      pageRef.current += 1;
-      const trending = await getDiscoverMedia(mediaType, pageRef.current, activeProvider);
-      const seenIds = new Set([
-        ...likedMovies.map(m => m.id),
-        ...rejectedMovies.map(m => m.id),
-        ...movies.map(m => m.id)
-      ]);
-      const newMovies = trending.filter(m => !seenIds.has(m.id));
-      setMovies(prev => [...prev, ...newMovies]);
-    } catch {
-      // Silent — queue still has cards
-    }
-  };
-
   const handleSwipe = async (direction: 'left' | 'right', media: Media) => {
     if (direction === 'right') {
       const newLiked = [...likedMovies, media];
       setLikedMovies(newLiked);
       saveInteraction(media, 'like');
 
+      // Splice recommendations right after the top 2 cards
       getRecommendations(media.id, media.media_type).then(recs => {
         const seenIds = new Set([
           ...newLiked.map(m => m.id),
           ...rejectedMovies.map(m => m.id),
-          ...movies.map(m => m.id)
+          ...movies.map(m => m.id),
         ]);
-        const newMovies = recs.filter(m => !seenIds.has(m.id)).slice(0, 5);
+        const newMovies = recs
+          .filter(m => m.media_type === mediaType && !seenIds.has(m.id))
+          .slice(0, 5);
         if (newMovies.length > 0) {
           setMovies(prev => {
             const current = [...prev];
@@ -193,11 +266,15 @@ export default function App() {
 
     setMovies(prev => {
       const next = prev.slice(1);
-      if (next.length < 5) {
-        fetchMoreMovies();
-      }
+      if (next.length < 5) fetchMoreMovies();
       return next;
     });
+  };
+
+  const toggleExploreMode = () => {
+    const next = !exploreMode;
+    setExploreMode(next);
+    localStorage.setItem('cs_explore_mode', String(next));
   };
 
   if (error) {
@@ -216,7 +293,7 @@ export default function App() {
     );
   }
 
-  // Filter liked movies based on current filters for the list view
+  // Filter liked movies for the list view based on active filters
   const filteredLikedMovies = likedMovies.filter(m => {
     const typeMatch = m.media_type === mediaType;
     const providerMatch = activeProvider === null || m.provider_id === activeProvider;
@@ -238,14 +315,14 @@ export default function App() {
           <div className="flex gap-2 items-center">
             <div className="flex gap-2 bg-zinc-900/50 p-1 rounded-full border border-white/10 backdrop-blur-md">
               <button
-                onClick={() => setView('swipe')}
+                onClick={() => navigate(buildPath('swipe', activeProvider, mediaType))}
                 className={`p-3 rounded-full transition-colors ${view === 'swipe' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
                 aria-label="Swipe view"
               >
                 <Film size={18} />
               </button>
               <button
-                onClick={() => setView('list')}
+                onClick={() => navigate(buildPath('list', activeProvider, mediaType))}
                 className={`p-3 rounded-full transition-colors ${view === 'list' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'}`}
                 aria-label="Watchlist view"
               >
@@ -265,26 +342,46 @@ export default function App() {
 
         {/* Filters */}
         <div className="flex flex-col gap-3">
-          <div className="flex gap-2">
+          {/* Media type + mode toggle row */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex gap-2">
+              <button
+                onClick={() => navigate(buildPath(view, activeProvider, 'movie'))}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${mediaType === 'movie' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 border border-white/10 hover:text-white'}`}
+              >
+                <Film size={14} /> Movies
+              </button>
+              <button
+                onClick={() => navigate(buildPath(view, activeProvider, 'tv'))}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${mediaType === 'tv' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 border border-white/10 hover:text-white'}`}
+              >
+                <Tv size={14} /> Series
+              </button>
+            </div>
+
+            {/* For You / Explore mode toggle */}
             <button
-              onClick={() => setMediaType('movie')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${mediaType === 'movie' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 border border-white/10 hover:text-white'}`}
+              onClick={toggleExploreMode}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium transition-all border ${
+                exploreMode
+                  ? 'bg-violet-500/20 text-violet-400 border-violet-500/30 hover:bg-violet-500/30'
+                  : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20'
+              }`}
+              title={exploreMode ? 'Switch to recommendations based on your likes' : 'Switch to explore new content'}
             >
-              <Film size={14} /> Movies
-            </button>
-            <button
-              onClick={() => setMediaType('tv')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${mediaType === 'tv' ? 'bg-white text-black' : 'bg-zinc-900 text-zinc-400 border border-white/10 hover:text-white'}`}
-            >
-              <Tv size={14} /> Series
+              {exploreMode
+                ? <><Compass size={12} /> Explore</>
+                : <><Sparkles size={12} /> For You</>
+              }
             </button>
           </div>
 
+          {/* Provider chips */}
           <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
             {PROVIDERS.map(provider => (
               <button
-                key={provider.id || 'all'}
-                onClick={() => setActiveProvider(provider.id)}
+                key={provider.slug ?? 'all'}
+                onClick={() => navigate(buildPath(view, provider.id, mediaType))}
                 className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${activeProvider === provider.id ? 'bg-emerald-500 text-black' : 'bg-zinc-900 text-zinc-400 border border-white/10 hover:text-white'}`}
               >
                 {provider.name}

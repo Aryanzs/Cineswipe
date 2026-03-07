@@ -33,8 +33,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   useEffect(() => {
-    // getSession() reliably resolves the initial session even when the access
-    // token is expired and needs a refresh — avoids infinite loading on reopen.
+    // Guard: only the first resolver (getSession OR INITIAL_SESSION) calls setLoading(false).
+    // This handles cases where getSession() hangs (network issue, Supabase sleeping, etc.)
+    // — the INITIAL_SESSION event fires as a fallback, and vice versa.
+    let resolved = false;
+    const done = () => {
+      if (!resolved) {
+        resolved = true;
+        setLoading(false);
+      }
+    };
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       try {
         if (session?.user) {
@@ -44,14 +53,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       } catch {
         // Profile load failed — stay logged out
       } finally {
-        setLoading(false);
+        done();
       }
-    });
+    }).catch(done); // handles getSession() itself rejecting
 
-    // onAuthStateChange handles SUBSEQUENT events only: login, logout, token refresh.
-    // It does NOT control the loading state — getSession handles that.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
         try {
           if (session?.user) {
             const username = await loadProfile(session.user.id);
@@ -62,6 +69,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           }
         } catch {
           setUser(null);
+        } finally {
+          // INITIAL_SESSION fires once on subscribe — acts as fallback resolver
+          // if getSession() is hanging (e.g. during a slow token refresh).
+          if (event === 'INITIAL_SESSION') done();
         }
       }
     );
